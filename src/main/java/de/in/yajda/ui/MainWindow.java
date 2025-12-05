@@ -152,31 +152,68 @@ public class MainWindow extends JFrame {
 		File dll = fileChooser.getSelectedFile();
 		if (dll == null || !dll.exists())
 			return;
+
 		try {
+			// 1) Parse exports from the DLL
 			DllParser parser = new DllParser();
 			List<FunctionInfo> functions = parser.parseExports(dll);
+
+			// 2) Update UI model
 			functionListPanel.setFunctions(functions);
 			currentDll = dll;
 			consolePanel.append("Loaded DLL: " + dll.getAbsolutePath());
 
-			// update completions
-			updateEditorCompletionsFromFunctions(functions);
+			// 3) Prepare scripting environment (always provide wrapper methods so scripts can call dll.X())
+			// Even if native proxy creation fails, we can still try JNA fallback if available.
+			List<String> functionNames = new ArrayList<>();
+			for (FunctionInfo f : functions) {
+				if (f != null && f.name != null && !f.name.isBlank()) {
+					functionNames.add(f.name);
+				}
+			}
 
+			// 4) Create/attach native proxy (Windows only). If it fails, continue but inform the user.
 			if (!Main.IS_WINDOWS) {
-				consolePanel.append("Platform is not Windows — skipping JNA proxy creation.");
+				consolePanel.append("Platform is not Windows — skipping JNA proxy creation. Script JNA-fallback may still work if available.");
 				nativeProxy = null;
-				scriptManager.setNativeProxy(null);
+				// still set current DLL file and function names so JNA fallback is available in scripts
+				try {
+					scriptManager.setNativeProxy(null);
+					scriptManager.setCurrentDllFile(currentDll);
+					scriptManager.setAvailableFunctionNames(functionNames);
+				} catch (Throwable t) {
+					consolePanel.append("Failed to prepare scripting wrapper: " + t.getMessage());
+				}
 			} else {
 				try {
 					JnaProxyFactory factory = new JnaProxyFactory(dll.getAbsolutePath());
 					nativeProxy = factory.createNativeProxy();
 					scriptManager.setNativeProxy(nativeProxy);
+					scriptManager.setCurrentDllFile(currentDll);
+					scriptManager.setAvailableFunctionNames(functionNames);
+					consolePanel.append("Scripting wrapper 'dll' created with " + functionNames.size() + " functions.");
 				} catch (Throwable t) {
+					// proxy creation failed — still try to provide wrapper that may use JNA fallback
 					consolePanel.append("Failed to create JNA proxy: " + t.getMessage());
 					nativeProxy = null;
-					scriptManager.setNativeProxy(null);
+					try {
+						scriptManager.setNativeProxy(null);
+						scriptManager.setCurrentDllFile(currentDll);
+						scriptManager.setAvailableFunctionNames(functionNames);
+						consolePanel.append("Scripting wrapper 'dll' created (JNA fallback enabled).");
+					} catch (Throwable tt) {
+						consolePanel.append("Failed to prepare scripting wrapper after proxy failure: " + tt.getMessage());
+					}
 				}
 			}
+
+			// 5) Update editor completions with function names (so Ctrl+Space will propose native methods)
+			try {
+				updateEditorCompletionsFromFunctions(functions);
+			} catch (Throwable t) {
+				consolePanel.append("Failed to update completions: " + t.getMessage());
+			}
+
 		} catch (Exception ex) {
 			ex.printStackTrace();
 			JOptionPane.showMessageDialog(this, "Failed to load DLL: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
@@ -363,20 +400,26 @@ public class MainWindow extends JFrame {
 
 	private String makeSnippet(FunctionInfo fi) {
 		StringBuilder sb = new StringBuilder();
-		boolean hasReturn = fi.returnType != null && !fi.returnType.isEmpty() && !"void".equalsIgnoreCase(fi.returnType);
-		if (hasReturn)
-			sb.append("[result=]");
-		sb.append(fi.name).append("(");
+		// Call via dll object so scripts must use dll.METHOD();
+		sb.append("dll.").append(fi.name).append("(");
 		for (int i = 0; i < fi.paramTypes.size(); i++) {
 			if (i > 0)
 				sb.append(", ");
 			sb.append("arg").append(i);
-			String t = fi.paramTypes.get(i);
-			if (t != null && !t.isEmpty() && !"unknown".equalsIgnoreCase(t)) {
-				sb.append(" /*").append(t).append("*/");
-			}
 		}
 		sb.append(");");
+		// add a trailing comment with signature if available
+		if (fi.returnType != null && !fi.returnType.isEmpty() && !fi.returnType.equalsIgnoreCase("unknown")) {
+			sb.append(" // ").append(fi.returnType).append(" ").append(fi.name).append("(");
+			for (int i = 0; i < fi.paramTypes.size(); i++) {
+				if (i > 0)
+					sb.append(", ");
+				sb.append(fi.paramTypes.get(i) != null ? fi.paramTypes.get(i) : "unknown").append(" arg").append(i);
+			}
+			sb.append(")");
+		} else {
+			sb.append(" // signature unknown: ").append(fi.name);
+		}
 		return sb.toString();
 	}
 
