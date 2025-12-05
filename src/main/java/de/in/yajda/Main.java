@@ -5,14 +5,23 @@ import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import javax.swing.UnsupportedLookAndFeelException;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import com.formdev.flatlaf.FlatDarkLaf;
 
+import de.in.utils.Log4jTools;
+import de.in.utils.Version;
 import de.in.yajda.ui.MainWindow;
 
 public class Main {
 	// Expose platform flags for other components
 	public static final boolean IS_WINDOWS;
 	public static final boolean IS_64BIT;
+
+	private static final Logger LOGGER = LogManager.getLogger(Main.class);
+	private static final String GROUPID = "de.in.yajda";
+	private static final String ARTIFACTID = "java-dll-analyzer";
 
 	static {
 		String os = System.getProperty("os.name", "").toLowerCase();
@@ -22,6 +31,10 @@ public class Main {
 	}
 
 	public static void main(String[] args) {
+
+		Log4jTools.redirectStdOutErrLog();
+		Log4jTools.logEnvironment(LOGGER);
+		LOGGER.info("yaJDA " + Version.retrieveVersionFromPom(GROUPID, ARTIFACTID) + " started");
 		try {
 			UIManager.setLookAndFeel(new FlatDarkLaf());
 		} catch (UnsupportedLookAndFeelException e) {
