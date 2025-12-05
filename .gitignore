@@ -1,3 +1,4 @@
+*.json
 target/
 log/
 .settings/
