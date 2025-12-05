@@ -41,7 +41,7 @@ public class JnaProxyFactory {
 			Function f = functions.computeIfAbsent(name, n -> {
 				try {
 					return lib.getFunction(n);
-				} catch (UnsatisfiedLinkError e) {
+				} catch (UnsatisfiedLinkError ex) {
 					return null;
 				}
 			});
@@ -60,8 +60,8 @@ public class JnaProxyFactory {
 				// Choose a mapping for return type
 				Class<?> mapRet = mapReturnType(ret);
 				return f.invoke(mapRet, args == null ? new Object[0] : args);
-			} catch (Throwable t) {
-				throw t;
+			} catch (Throwable ex) {
+				throw ex;
 			}
 		};
 

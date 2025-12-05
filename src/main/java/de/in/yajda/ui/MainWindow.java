@@ -34,6 +34,8 @@ import javax.swing.SwingUtilities;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.AbstractTableModel;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
@@ -59,6 +61,7 @@ public class MainWindow extends JFrame {
 	private File currentDll;
 	private JnaProxyFactory.ProxyWrapper nativeProxy;
 	private JComboBox<String> languageCombo;
+	private static final Logger LOGGER = LogManager.getLogger(MainWindow.class);
 
 	public MainWindow() {
 		super("Java-Dll-Analyzer");
@@ -79,10 +82,10 @@ public class MainWindow extends JFrame {
 					setIconImage(img);
 				}
 			} else {
-				System.err.println("Icon resource /icon.svg not found.");
+				LOGGER.warn("Icon resource /icon.svg not found.");
 			}
-		} catch (Throwable t) {
-			System.err.println("Failed to load SVG icon: " + t.getMessage());
+		} catch (Throwable ex) {
+			LOGGER.warn("Failed to load SVG icon: ", ex);
 		}
 
 		scriptManager = new ScriptManager(this::appendConsole, 5000);
@@ -197,14 +200,14 @@ public class MainWindow extends JFrame {
 					JnaProxyFactory factory = new JnaProxyFactory(dll.getAbsolutePath());
 					nativeProxy = factory.createNativeProxy();
 					scriptManager.setNativeProxy(nativeProxy);
-				} catch (Throwable t) {
-					appendConsole("Failed to create JNA proxy: " + t.getMessage());
+				} catch (Throwable ex) {
+					appendConsole("Failed to create JNA proxy: " + ex.getMessage());
 					nativeProxy = null;
 					scriptManager.setNativeProxy(null);
 				}
 			}
 		} catch (Exception ex) {
-			ex.printStackTrace();
+			LOGGER.warn("",ex);
 			JOptionPane.showMessageDialog(this, "Failed to load DLL: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
 		}
 	}
@@ -251,7 +254,7 @@ public class MainWindow extends JFrame {
 			}
 			appendConsole("Project loaded: " + f.getAbsolutePath());
 		} catch (Exception ex) {
-			ex.printStackTrace();
+			LOGGER.warn("",ex);
 			JOptionPane.showMessageDialog(this, "Failed to load project: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
 		}
 	}
@@ -278,7 +281,7 @@ public class MainWindow extends JFrame {
 			}
 			appendConsole("Project saved: " + f.getAbsolutePath());
 		} catch (Exception ex) {
-			ex.printStackTrace();
+			LOGGER.warn("",ex);
 			JOptionPane.showMessageDialog(this, "Failed to save project: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
 		}
 	}

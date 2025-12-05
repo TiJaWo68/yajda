@@ -77,14 +77,14 @@ public class ScriptManager {
 				ps.flush();
 				er.output = bout.toString();
 				er.result = res;
-			} catch (Throwable t) {
+			} catch (Throwable ex) {
 				ps.flush();
 				er.output = bout.toString();
-				er.threw = t;
+				er.threw = ex;
 			} finally {
 				try {
 					ps.close();
-				} catch (Exception ignored) {
+				} catch (Exception ex) {
 				}
 			}
 			return er;
@@ -95,16 +95,16 @@ public class ScriptManager {
 			try {
 				ExecutionResult res = fut.get(timeoutMs, TimeUnit.MILLISECONDS);
 				callback.accept(res);
-			} catch (TimeoutException te) {
+			} catch (TimeoutException ex) {
 				fut.cancel(true);
 				er.timedOut = true;
 				er.output = "Script timed out.";
 				callback.accept(er);
-			} catch (ExecutionException ee) {
-				er.threw = ee.getCause();
+			} catch (ExecutionException ex) {
+				er.threw = ex.getCause();
 				callback.accept(er);
-			} catch (InterruptedException ie) {
-				er.threw = ie;
+			} catch (InterruptedException ex) {
+				er.threw = ex;
 				callback.accept(er);
 			}
 		});

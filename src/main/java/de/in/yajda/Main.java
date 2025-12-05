@@ -37,8 +37,8 @@ public class Main {
 		LOGGER.info("yaJDA " + Version.retrieveVersionFromPom(GROUPID, ARTIFACTID) + " started");
 		try {
 			UIManager.setLookAndFeel(new FlatDarkLaf());
-		} catch (UnsupportedLookAndFeelException e) {
-			System.err.println("Failed to set FlatDarkLaf: " + e.getMessage());
+		} catch (UnsupportedLookAndFeelException ex) {
+			LOGGER.warn("Failed to set FlatDarkLaf: ",ex);
 		}
 
 		SwingUtilities.invokeLater(() -> {
@@ -59,9 +59,9 @@ public class Main {
 			try {
 				MainWindow window = new MainWindow();
 				window.setVisible(true);
-			} catch (Exception e) {
-				e.printStackTrace();
-				JOptionPane.showMessageDialog(null, "Failed to start application: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+			} catch (Exception ex) {
+				LOGGER.warn("",ex);
+				JOptionPane.showMessageDialog(null, "Failed to start application: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
 				System.exit(2);
 			}
 		});
