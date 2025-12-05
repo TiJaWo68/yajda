@@ -1,42 +1,27 @@
 package de.in.yajda.ui;
 
 import java.awt.BorderLayout;
-import java.awt.Dimension;
-import java.awt.FlowLayout;
 import java.awt.Image;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
-import java.io.Reader;
-import java.io.Writer;
 import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
-import javax.swing.JButton;
-import javax.swing.JComboBox;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
-import javax.swing.JLabel;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
-import javax.swing.JTable;
-import javax.swing.JTextArea;
-import javax.swing.SwingUtilities;
 import javax.swing.filechooser.FileNameExtensionFilter;
-import javax.swing.table.AbstractTableModel;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 
@@ -45,50 +30,77 @@ import com.formdev.flatlaf.extras.FlatSVGIcon;
 import de.in.yajda.Main;
 import de.in.yajda.dll.DllParser;
 import de.in.yajda.dll.DllParser.FunctionInfo;
+import de.in.yajda.dll.HeaderParser;
+import de.in.yajda.dll.HeaderParser.HeaderInfo;
 import de.in.yajda.dll.JnaProxyFactory;
 import de.in.yajda.script.ScriptManager;
 
 /**
- * Main application window. Modified to load SVG icon via FlatLaf extras (FlatSVGIcon) and set it as the frame icon.
+ * Slimmed MainWindow that composes smaller components: - FunctionListPanel - EditorPanel (existing) - TopControlPanel - ConsolePanel
+ *
+ * The behavior is unchanged; functionality is moved into the smaller components.
  */
 public class MainWindow extends JFrame {
-	private JTable functionTable;
-	private FunctionTableModel functionTableModel;
-	private EditorPanel editorPanel;
-	private JTextArea consoleArea;
+	private final FunctionListPanel functionListPanel;
+	private final EditorPanel editorPanel;
+	private final TopControlPanel topControlPanel;
+	private final ConsolePanel consolePanel;
+
 	private ScriptManager scriptManager;
 	private JFileChooser fileChooser = new JFileChooser(".");
 	private File currentDll;
+	private File currentHeader;
 	private JnaProxyFactory.ProxyWrapper nativeProxy;
-	private JComboBox<String> languageCombo;
-	private static final Logger LOGGER = LogManager.getLogger(MainWindow.class);
 
 	public MainWindow() {
-		super("Java-Dll-Analyzer");
+		super("yajda - Java DLL Analyzer");
 		setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 		setSize(1000, 700);
 		setLocationRelativeTo(null);
 
-		initMenu();
-		initUi();
+		// panels
+		functionListPanel = new FunctionListPanel();
+		editorPanel = new EditorPanel();
+		topControlPanel = new TopControlPanel();
+		consolePanel = new ConsolePanel();
 
-		// Load SVG icon (uses FlatLaf extras). If not available or fails, just continue.
+		initMenu();
+		layoutUi();
+		initBehaviors();
+
+		// Load icon
 		try {
 			java.net.URL iconUrl = getClass().getResource("/icon.svg");
 			if (iconUrl != null) {
 				FlatSVGIcon svgIcon = new FlatSVGIcon(iconUrl);
 				Image img = svgIcon.derive(64, 64).getImage();
-				if (img != null) {
+				if (img != null)
 					setIconImage(img);
-				}
-			} else {
-				LOGGER.warn("Icon resource /icon.svg not found.");
 			}
-		} catch (Throwable ex) {
-			LOGGER.warn("Failed to load SVG icon: ", ex);
+		} catch (Throwable t) {
+			// ignore
 		}
 
-		scriptManager = new ScriptManager(this::appendConsole, 5000);
+		scriptManager = new ScriptManager(consolePanel::append, 5000);
+	}
+
+	private void layoutUi() {
+		// left = function list
+		JPanel left = new JPanel(new BorderLayout());
+		left.add(functionListPanel, BorderLayout.CENTER);
+
+		// center = editor with top controls and console below
+		JPanel center = new JPanel(new BorderLayout());
+		center.add(topControlPanel, BorderLayout.NORTH);
+		center.add(editorPanel, BorderLayout.CENTER);
+
+		JSplitPane rightSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, center, consolePanel);
+		rightSplit.setResizeWeight(0.7);
+
+		JSplitPane mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, rightSplit);
+		mainSplit.setResizeWeight(0.3);
+
+		getContentPane().add(mainSplit, BorderLayout.CENTER);
 	}
 
 	private void initMenu() {
@@ -96,6 +108,8 @@ public class MainWindow extends JFrame {
 		JMenu file = new JMenu("File");
 		JMenuItem openDll = new JMenuItem("Open DLL...");
 		openDll.addActionListener(e -> onOpenDll());
+		JMenuItem openHeader = new JMenuItem("Load Header...");
+		openHeader.addActionListener(e -> onOpenHeader());
 		JMenuItem openProject = new JMenuItem("Open Project...");
 		openProject.addActionListener(e -> onOpenProject());
 		JMenuItem saveProject = new JMenuItem("Save Project...");
@@ -103,6 +117,7 @@ public class MainWindow extends JFrame {
 		JMenuItem exit = new JMenuItem("Exit");
 		exit.addActionListener(e -> System.exit(0));
 		file.add(openDll);
+		file.add(openHeader);
 		file.addSeparator();
 		file.add(openProject);
 		file.add(saveProject);
@@ -112,66 +127,21 @@ public class MainWindow extends JFrame {
 		setJMenuBar(mb);
 	}
 
-	private void initUi() {
-		JPanel leftPanel = new JPanel(new BorderLayout());
-		functionTableModel = new FunctionTableModel(Collections.emptyList());
-		functionTable = new JTable(functionTableModel);
-		functionTable.setFillsViewportHeight(true);
-		functionTable.addMouseListener(new MouseAdapter() {
-			@Override
-			public void mouseClicked(MouseEvent e) {
-				if (e.getClickCount() == 2) {
-					int r = functionTable.getSelectedRow();
-					if (r >= 0) {
-						FunctionInfo fi = functionTableModel.getFunctionAt(r);
-						String snippet = makeSnippet(fi);
-						editorPanel.insertSnippet(snippet);
-					}
-				}
-			}
+	private void initBehaviors() {
+		// double click on function -> insert snippet into editor
+		functionListPanel.addFunctionDoubleClickListener(fi -> {
+			String snippet = makeSnippet(fi);
+			editorPanel.insertSnippet(snippet);
 		});
-		leftPanel.add(new JScrollPane(functionTable), BorderLayout.CENTER);
-		leftPanel.setPreferredSize(new Dimension(380, 600));
 
-		editorPanel = new EditorPanel();
-		editorPanel.setSyntax(SyntaxConstants.SYNTAX_STYLE_JAVASCRIPT); // default placeholder
-		JPanel centerPanel = new JPanel(new BorderLayout());
-		centerPanel.add(editorPanel, BorderLayout.CENTER);
-
-		// top controls: script language and Run button
-		JPanel topControls = new JPanel(new FlowLayout(FlowLayout.LEFT));
-		languageCombo = new JComboBox<>(new String[] { "BeanShell", "Python", "JavaScript" });
-		languageCombo.setSelectedItem("BeanShell");
-		languageCombo.addActionListener(e -> {
-			String lang = (String) languageCombo.getSelectedItem();
-			if ("BeanShell".equals(lang)) {
-				editorPanel.setLanguage("BeanShell");
-			} else if ("Python".equals(lang)) {
-				editorPanel.setLanguage("Python");
-			} else {
-				editorPanel.setLanguage("JavaScript");
-			}
+		// language change -> update editor highlighting
+		topControlPanel.addLanguageChangeListener(e -> {
+			String lang = topControlPanel.getSelectedLanguage();
+			editorPanel.setLanguage(lang);
 		});
-		JButton runBtn = new JButton("Run Script");
-		runBtn.addActionListener(e -> onRunScript());
-		topControls.add(new JLabel("Script language:"));
-		topControls.add(languageCombo);
-		topControls.add(runBtn);
 
-		centerPanel.add(topControls, BorderLayout.NORTH);
-
-		consoleArea = new JTextArea();
-		consoleArea.setEditable(false);
-		JScrollPane consoleScroll = new JScrollPane(consoleArea);
-		consoleScroll.setPreferredSize(new Dimension(400, 150));
-
-		JSplitPane rightSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, centerPanel, consoleScroll);
-		rightSplit.setResizeWeight(0.7);
-
-		JSplitPane mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPanel, rightSplit);
-		mainSplit.setResizeWeight(0.3);
-
-		getContentPane().add(mainSplit, BorderLayout.CENTER);
+		// run button -> execute script
+		topControlPanel.addRunListener(e -> onRunScript());
 	}
 
 	private void onOpenDll() {
@@ -185,30 +155,76 @@ public class MainWindow extends JFrame {
 		try {
 			DllParser parser = new DllParser();
 			List<FunctionInfo> functions = parser.parseExports(dll);
-			functionTableModel.setFunctions(functions);
+			functionListPanel.setFunctions(functions);
 			currentDll = dll;
-			appendConsole("Loaded DLL: " + dll.getAbsolutePath());
+			consolePanel.append("Loaded DLL: " + dll.getAbsolutePath());
+
+			// update completions
+			updateEditorCompletionsFromFunctions(functions);
 
 			if (!Main.IS_WINDOWS) {
-				// On non-Windows platforms do not create JNA proxies; inform the user.
-				appendConsole("Platform is not Windows — skipping JNA proxy creation. Native calls will not be available.");
+				consolePanel.append("Platform is not Windows — skipping JNA proxy creation.");
 				nativeProxy = null;
 				scriptManager.setNativeProxy(null);
 			} else {
-				// Create proxy for scripting (Windows only)
 				try {
 					JnaProxyFactory factory = new JnaProxyFactory(dll.getAbsolutePath());
 					nativeProxy = factory.createNativeProxy();
 					scriptManager.setNativeProxy(nativeProxy);
-				} catch (Throwable ex) {
-					appendConsole("Failed to create JNA proxy: " + ex.getMessage());
+				} catch (Throwable t) {
+					consolePanel.append("Failed to create JNA proxy: " + t.getMessage());
 					nativeProxy = null;
 					scriptManager.setNativeProxy(null);
 				}
 			}
 		} catch (Exception ex) {
-			LOGGER.warn("",ex);
+			ex.printStackTrace();
 			JOptionPane.showMessageDialog(this, "Failed to load DLL: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+		}
+	}
+
+	private void onOpenHeader() {
+		fileChooser.setFileFilter(new FileNameExtensionFilter("C Header", "h", "hpp"));
+		int r = fileChooser.showOpenDialog(this);
+		if (r != JFileChooser.APPROVE_OPTION)
+			return;
+		File header = fileChooser.getSelectedFile();
+		if (header == null || !header.exists())
+			return;
+		try {
+			HeaderParser hp = new HeaderParser();
+			Map<String, HeaderInfo> infos = hp.parseHeader(header);
+			consolePanel.append("Loaded header: " + header.getAbsolutePath() + " (" + infos.size() + " prototypes)");
+
+			currentHeader = header;
+
+			// merge with existing exports
+			List<FunctionInfo> existing = functionListPanel.getFunctions();
+			List<FunctionInfo> merged = new ArrayList<>();
+			if (existing.isEmpty()) {
+				for (Map.Entry<String, HeaderInfo> e : infos.entrySet()) {
+					HeaderInfo hi = e.getValue();
+					merged.add(new FunctionInfo(e.getKey(), hi.returnType != null ? hi.returnType : "unknown",
+							hi.paramTypes != null ? hi.paramTypes : new ArrayList<>()));
+				}
+			} else {
+				for (FunctionInfo fi : existing) {
+					HeaderInfo hi = infos.get(fi.name);
+					if (hi != null) {
+						merged.add(new FunctionInfo(fi.name, hi.returnType != null ? hi.returnType : fi.returnType,
+								hi.paramTypes != null ? hi.paramTypes : fi.paramTypes));
+					} else {
+						merged.add(fi);
+					}
+				}
+			}
+			functionListPanel.setFunctions(merged);
+
+			// update completions
+			updateEditorCompletionsFromFunctions(merged);
+		} catch (Exception ex) {
+			ex.printStackTrace();
+			JOptionPane.showMessageDialog(this, "Failed to load header: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
 		}
 	}
 
@@ -218,43 +234,86 @@ public class MainWindow extends JFrame {
 		if (r != JFileChooser.APPROVE_OPTION)
 			return;
 		File f = fileChooser.getSelectedFile();
-		try (Reader rd = new FileReader(f)) {
+		try (FileReader rd = new FileReader(f)) {
 			JSONParser p = new JSONParser();
 			JSONObject obj = (JSONObject) p.parse(rd);
 			String dllPath = (String) obj.get("dllPath");
 			String lang = (String) obj.get("scriptLanguage");
-			String scriptFile = (String) obj.get("scriptFile");
-			if (dllPath != null) {
+			String scriptContent = (String) obj.get("scriptContent");
+			String headerPath = (String) obj.get("headerFile");
+			if (dllPath != null && !dllPath.isEmpty()) {
 				File dll = new File(dllPath);
 				if (dll.exists()) {
-					fileChooser.setCurrentDirectory(dll.getParentFile());
-					// reuse open
 					DllParser parser = new DllParser();
 					List<FunctionInfo> functions = parser.parseExports(dll);
-					functionTableModel.setFunctions(functions);
+					functionListPanel.setFunctions(functions);
 					currentDll = dll;
-					JnaProxyFactory factory = new JnaProxyFactory(dll.getAbsolutePath());
-					nativeProxy = factory.createNativeProxy();
-					scriptManager.setNativeProxy(nativeProxy);
+					// update completions
+					updateEditorCompletionsFromFunctions(functions);
+					try {
+						JnaProxyFactory factory = new JnaProxyFactory(dll.getAbsolutePath());
+						nativeProxy = factory.createNativeProxy();
+						scriptManager.setNativeProxy(nativeProxy);
+					} catch (Throwable t) {
+						consolePanel.append("Failed to create JNA proxy: " + t.getMessage());
+						nativeProxy = null;
+						scriptManager.setNativeProxy(null);
+					}
 				} else {
-					appendConsole("DLL from project not found: " + dllPath);
+					consolePanel.append("DLL from project not found: " + dllPath);
 				}
 			}
-			if (lang != null) {
-				languageCombo.setSelectedItem(lang);
-			}
-			if (scriptFile != null) {
-				File sf = new File(scriptFile);
-				if (sf.exists()) {
-					String txt = Files.readString(sf.toPath());
-					editorPanel.setText(txt);
+			if (headerPath != null && !headerPath.isEmpty()) {
+				File hf = new File(headerPath);
+				if (hf.exists()) {
+					HeaderParser hp = new HeaderParser();
+					Map<String, HeaderInfo> infos = hp.parseHeader(hf);
+					// merge as in onOpenHeader
+					List<FunctionInfo> existing = functionListPanel.getFunctions();
+					List<FunctionInfo> merged = new ArrayList<>();
+					if (existing.isEmpty()) {
+						for (Map.Entry<String, HeaderInfo> e : infos.entrySet()) {
+							HeaderInfo hi = e.getValue();
+							merged.add(new FunctionInfo(e.getKey(), hi.returnType != null ? hi.returnType : "unknown",
+									hi.paramTypes != null ? hi.paramTypes : new ArrayList<>()));
+						}
+					} else {
+						for (FunctionInfo fi : existing) {
+							HeaderInfo hi = infos.get(fi.name);
+							if (hi != null) {
+								merged.add(new FunctionInfo(fi.name, hi.returnType != null ? hi.returnType : fi.returnType,
+										hi.paramTypes != null ? hi.paramTypes : fi.paramTypes));
+							} else {
+								merged.add(fi);
+							}
+						}
+					}
+					functionListPanel.setFunctions(merged);
+					currentHeader = hf;
+					updateEditorCompletionsFromFunctions(merged);
 				} else {
-					appendConsole("Script file from project not found: " + scriptFile);
+					consolePanel.append("Header file from project not found: " + headerPath);
 				}
 			}
-			appendConsole("Project loaded: " + f.getAbsolutePath());
+			if (lang != null)
+				topControlPanel.setSelectedLanguage(lang);
+			if (scriptContent != null && !scriptContent.isEmpty()) {
+				editorPanel.setText(scriptContent);
+			} else {
+				String scriptFile = (String) obj.get("scriptFile");
+				if (scriptFile != null && !scriptFile.isEmpty()) {
+					File sf = new File(scriptFile);
+					if (sf.exists()) {
+						String txt = Files.readString(sf.toPath());
+						editorPanel.setText(txt);
+					} else {
+						consolePanel.append("Script file from project not found: " + scriptFile);
+					}
+				}
+			}
+			consolePanel.append("Project loaded: " + f.getAbsolutePath());
 		} catch (Exception ex) {
-			LOGGER.warn("",ex);
+			ex.printStackTrace();
 			JOptionPane.showMessageDialog(this, "Failed to load project: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
 		}
 	}
@@ -265,35 +324,49 @@ public class MainWindow extends JFrame {
 		if (r != JFileChooser.APPROVE_OPTION)
 			return;
 		File f = fileChooser.getSelectedFile();
+		if (f != null && !f.getName().toLowerCase().endsWith(".json")) {
+			f = new File(f.getParentFile(), f.getName() + ".json");
+		}
 		JSONObject obj = new JSONObject();
 		obj.put("dllPath", currentDll != null ? currentDll.getAbsolutePath() : "");
-		obj.put("scriptLanguage", languageCombo.getSelectedItem());
-		// Save current script to scripts/main.bsh by default if not specified
-		try {
-			File scriptsDir = new File("scripts");
-			if (!scriptsDir.exists())
-				scriptsDir.mkdirs();
-			File sf = new File(scriptsDir, "main.bsh");
-			Files.writeString(sf.toPath(), editorPanel.getText());
-			obj.put("scriptFile", sf.getPath());
-			try (Writer w = new FileWriter(f)) {
-				w.write(obj.toJSONString());
-			}
-			appendConsole("Project saved: " + f.getAbsolutePath());
+		obj.put("scriptLanguage", topControlPanel.getSelectedLanguage());
+		obj.put("headerFile", currentHeader != null ? currentHeader.getAbsolutePath() : "");
+		// embed script content
+		obj.put("scriptContent", editorPanel.getText());
+		obj.put("scriptFile", ""); // kept empty as script is embedded
+		try (FileWriter w = new FileWriter(f)) {
+			w.write(obj.toJSONString());
+			consolePanel.append("Project saved: " + f.getAbsolutePath());
 		} catch (Exception ex) {
-			LOGGER.warn("",ex);
+			ex.printStackTrace();
 			JOptionPane.showMessageDialog(this, "Failed to save project: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
 		}
+	}
+
+	private void updateEditorCompletionsFromFunctions(List<FunctionInfo> functions) {
+		Set<String> names = new LinkedHashSet<>();
+		// basic tokens
+		names.add("print");
+		names.add("println");
+		names.add("int");
+		names.add("long");
+		names.add("float");
+		names.add("double");
+		names.add("native");
+		names.add("nativeLib");
+		if (functions != null) {
+			for (FunctionInfo fi : functions)
+				names.add(fi.name);
+		}
+		editorPanel.updateCompletions(names);
 	}
 
 	private String makeSnippet(FunctionInfo fi) {
 		StringBuilder sb = new StringBuilder();
 		boolean hasReturn = fi.returnType != null && !fi.returnType.isEmpty() && !"void".equalsIgnoreCase(fi.returnType);
-		if (hasReturn) {
+		if (hasReturn)
 			sb.append("[result=]");
-		}
-		sb.append(fi.name);
-		sb.append("(");
+		sb.append(fi.name).append("(");
 		for (int i = 0; i < fi.paramTypes.size(); i++) {
 			if (i > 0)
 				sb.append(", ");
@@ -304,91 +377,25 @@ public class MainWindow extends JFrame {
 			}
 		}
 		sb.append(");");
-		// trailing comment
-		if (fi.returnType != null && !fi.returnType.isEmpty() && !fi.returnType.equalsIgnoreCase("unknown")) {
-			sb.append(" // ").append(fi.returnType).append(" ").append(fi.name).append("(");
-			for (int i = 0; i < fi.paramTypes.size(); i++) {
-				if (i > 0)
-					sb.append(", ");
-				String t = fi.paramTypes.get(i);
-				sb.append(t != null ? t : "unknown").append(" arg").append(i);
-			}
-			sb.append(")");
-		} else {
-			sb.append(" // signature unknown: ").append(fi.name);
-		}
 		return sb.toString();
 	}
 
 	private void onRunScript() {
 		String scriptText = editorPanel.getText();
-		String language = (String) languageCombo.getSelectedItem();
-		appendConsole("Running script (" + language + ")...");
-		// execute and wait with callback
+		String language = topControlPanel.getSelectedLanguage();
+		consolePanel.append("Running script (" + language + ")...");
 		scriptManager.executeScript(scriptText, language, result -> {
 			if (result.timedOut) {
-				appendConsole("*** Script timed out after " + scriptManager.getTimeoutMs() + " ms");
-			} else {
-				if (result.threw != null) {
-					appendConsole("*** Script threw exception: " + result.threw);
-				} else {
-					appendConsole("*** Script finished. Result: " + result.result);
-				}
+				consolePanel.append("*** Script timed out after " + scriptManager.getTimeoutMs() + " ms");
+			} else if (result.threw != null) {
+				consolePanel.append("*** Script threw exception: " + result.threw);
 				if (result.output != null)
-					appendConsole(result.output);
+					consolePanel.append(result.output);
+			} else {
+				consolePanel.append("*** Script finished. Result: " + result.result);
+				if (result.output != null)
+					consolePanel.append(result.output);
 			}
 		});
-	}
-
-	public void appendConsole(String s) {
-		SwingUtilities.invokeLater(() -> {
-			consoleArea.append(s + "\n");
-			consoleArea.setCaretPosition(consoleArea.getDocument().getLength());
-		});
-	}
-
-	// Table model for functions
-	static class FunctionTableModel extends AbstractTableModel {
-		private final String[] cols = { "Name", "Return", "Params" };
-		private List<FunctionInfo> functions;
-
-		FunctionTableModel(List<FunctionInfo> functions) {
-			this.functions = new ArrayList<>(functions);
-		}
-
-		public void setFunctions(List<FunctionInfo> f) {
-			this.functions = new ArrayList<>(f);
-			fireTableDataChanged();
-		}
-
-		public FunctionInfo getFunctionAt(int row) {
-			return functions.get(row);
-		}
-
-		@Override
-		public int getRowCount() {
-			return functions.size();
-		}
-
-		@Override
-		public int getColumnCount() {
-			return cols.length;
-		}
-
-		@Override
-		public String getColumnName(int column) {
-			return cols[column];
-		}
-
-		@Override
-		public Object getValueAt(int rowIndex, int columnIndex) {
-			FunctionInfo fi = functions.get(rowIndex);
-			return switch (columnIndex) {
-			case 0 -> fi.name;
-			case 1 -> fi.returnType != null ? fi.returnType : "unknown";
-			case 2 -> fi.paramTypes != null ? String.join(", ", fi.paramTypes) : "";
-			default -> "";
-			};
-		}
 	}
 }
