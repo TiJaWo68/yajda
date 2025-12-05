@@ -1,0 +1,5 @@
+{
+  "dllPath": "C:\\path\\to\\your.dll",
+  "scriptLanguage": "BeanShell",
+  "scriptFile": "scripts/main.bsh"
+}
