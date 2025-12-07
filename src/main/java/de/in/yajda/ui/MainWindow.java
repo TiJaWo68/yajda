@@ -36,7 +36,13 @@ import de.in.yajda.dll.JnaProxyFactory;
 import de.in.yajda.script.ScriptManager;
 
 /**
- * Slimmed MainWindow that composes smaller components: - FunctionListPanel - EditorPanel (existing) - TopControlPanel - ConsolePanel
+ * Slimmed MainWindow that composes smaller components:
+ * <ul>
+ * <li>FunctionListPanel</li>
+ * <li>EditorPanel</li>
+ * <li>TopControlPanel</li>
+ * <li>ConsolePanel</li>
+ * <ul>
  *
  * The behavior is unchanged; functionality is moved into the smaller components.
  */
@@ -174,7 +180,8 @@ public class MainWindow extends JFrame {
 
 			// 4) Create/attach native proxy (Windows only). If it fails, continue but inform the user.
 			if (!Main.IS_WINDOWS) {
-				consolePanel.append("Platform is not Windows — skipping JNA proxy creation. Script JNA-fallback may still work if available.");
+				consolePanel
+						.append("Platform is not Windows — skipping JNA proxy creation. Script JNA-fallback may still work if available.");
 				nativeProxy = null;
 				// still set current DLL file and function names so JNA fallback is available in scripts
 				try {
@@ -259,6 +266,7 @@ public class MainWindow extends JFrame {
 
 			// update completions
 			updateEditorCompletionsFromFunctions(merged);
+			updateScriptWrapper(merged);
 		} catch (Exception ex) {
 			ex.printStackTrace();
 			JOptionPane.showMessageDialog(this, "Failed to load header: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
@@ -287,6 +295,7 @@ public class MainWindow extends JFrame {
 					currentDll = dll;
 					// update completions
 					updateEditorCompletionsFromFunctions(functions);
+					updateScriptWrapper(functions);
 					try {
 						JnaProxyFactory factory = new JnaProxyFactory(dll.getAbsolutePath());
 						nativeProxy = factory.createNativeProxy();
@@ -328,6 +337,7 @@ public class MainWindow extends JFrame {
 					functionListPanel.setFunctions(merged);
 					currentHeader = hf;
 					updateEditorCompletionsFromFunctions(merged);
+					updateScriptWrapper(merged);
 				} else {
 					consolePanel.append("Header file from project not found: " + headerPath);
 				}
@@ -430,15 +440,26 @@ public class MainWindow extends JFrame {
 		scriptManager.executeScript(scriptText, language, result -> {
 			if (result.timedOut) {
 				consolePanel.append("*** Script timed out after " + scriptManager.getTimeoutMs() + " ms");
-			} else if (result.threw != null) {
-				consolePanel.append("*** Script threw exception: " + result.threw);
-				if (result.output != null)
-					consolePanel.append(result.output);
 			} else {
-				consolePanel.append("*** Script finished. Result: " + result.result);
+				if (result.threw != null) {
+					consolePanel.append("*** Script threw exception: " + result.threw);
+				} else {
+					consolePanel.append("*** Script finished. Result: " + result.result);
+				}
 				if (result.output != null)
 					consolePanel.append(result.output);
 			}
 		});
+	}
+
+	private void updateScriptWrapper(List<FunctionInfo> functions) {
+		List<String> names = new ArrayList<>();
+		if (functions != null) {
+			for (FunctionInfo fi : functions) {
+				if (fi.name != null && !fi.name.isBlank())
+					names.add(fi.name);
+			}
+		}
+		scriptManager.setAvailableFunctionNames(names);
 	}
 }
