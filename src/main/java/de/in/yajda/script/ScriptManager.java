@@ -106,7 +106,8 @@ public class ScriptManager {
 			consoleAppender.accept("Warning: failed to set interpreter output stream: " + e.getMessage());
 		}
 
-		// provide an invoker object in the interpreter which will be called from the dynamically generated wrapper
+		// provide an invoker object in the interpreter which will be called from the
+		// dynamically generated wrapper
 		try {
 			interpreter.set("dllInvoker", new NativeInvoker());
 		} catch (Exception e) {
@@ -133,8 +134,8 @@ public class ScriptManager {
 	}
 
 	/**
-	 * Generate a BeanShell wrapper class with methods for each function name and bind an instance as "dll". Call this after you've loaded the
-	 * DLL and know its exported names.
+	 * Generate a BeanShell wrapper class with methods for each function name and bind an instance as "dll". Call this after you've loaded
+	 * the DLL and know its exported names.
 	 *
 	 * Overloads generated: 0..6 arguments (Object typed), plus a varargs method name_v(Object[] args).
 	 */
@@ -145,9 +146,10 @@ public class ScriptManager {
 		this.availableFunctionNames = Collections.unmodifiableCollection(names);
 
 		StringBuilder sb = new StringBuilder();
-		sb.append("class _DLLWrapper {\n");
+		String className = "_DLLWrapper_" + System.nanoTime();
+		sb.append("class ").append(className).append(" {\n");
 		sb.append("  Object invoker;\n");
-		sb.append("  _DLLWrapper(Object inv) { this.invoker = inv; }\n");
+		sb.append("  ").append(className).append("(Object inv) { this.invoker = inv; }\n");
 
 		for (String raw : names) {
 			if (raw == null || raw.isBlank())
@@ -177,7 +179,8 @@ public class ScriptManager {
 			}
 
 			// varargs array form
-			sb.append("  Object ").append(name).append("_v(Object[] args) { return invoker.invoke(\"").append(name).append("\", args); }\n");
+			sb.append("  Object ").append(name).append("_v(Object[] args) { return invoker.invoke(\"").append(name)
+					.append("\", args); }\n");
 		}
 
 		// generic invoke
@@ -186,7 +189,7 @@ public class ScriptManager {
 
 		try {
 			interpreter.eval(sb.toString());
-			Object wrapper = interpreter.eval("new _DLLWrapper(dllInvoker)");
+			Object wrapper = interpreter.eval("new " + className + "(dllInvoker)");
 			interpreter.set("dll", wrapper);
 			consoleAppender.accept("Script wrapper 'dll' created with " + names.size() + " functions.");
 		} catch (Throwable t) {
@@ -266,9 +269,9 @@ public class ScriptManager {
 	}
 
 	/**
-	 * NativeInvoker: exposed into BeanShell as 'dllInvoker'.invoke(name, args) Attempts: 1) resolve proxied object and call method by name via
-	 * reflection 2) if method not found, try to call an 'invoke' style method on the wrapper via reflection 3) fallback: try JNA Function
-	 * lookup on currentDllFile and call it
+	 * NativeInvoker: exposed into BeanShell as 'dllInvoker'.invoke(name, args) Attempts: 1) resolve proxied object and call method by name
+	 * via reflection 2) if method not found, try to call an 'invoke' style method on the wrapper via reflection 3) fallback: try JNA
+	 * Function lookup on currentDllFile and call it
 	 */
 	public class NativeInvoker {
 		public Object invoke(String name, Object[] args) throws Exception {
@@ -328,7 +331,7 @@ public class ScriptManager {
 	private Object resolveProxyObject(JnaProxyFactory.ProxyWrapper wrapper) {
 		if (wrapper == null)
 			return null;
-		String[] candidates = new String[] { "getProxy", "getNativeProxy", "getProxyObject", "getProxyImpl", "getNative" };
+		String[] candidates = { "getProxy", "getNativeProxy", "getProxyObject", "getProxyImpl", "getNative" };
 		for (String name : candidates) {
 			try {
 				Method m = wrapper.getClass().getMethod(name);
